@@ -1,0 +1,183 @@
+To trigger different pipelines or run specific tasks based on branches like dev, sit, or preprod in Tekton, you can use Tekton Triggers to conditionally execute based on the branch name. Here's how you can create a trigger setup that handles different branches.
+
+Real-Time Example: Branch-Specific Pipeline Trigger
+1. Bitbucket Webhook
+First, set up a webhook on Bitbucket to send push events to Tekton (the same as in the previous example).
+
+2. EventListener for Multiple Branches
+You can create a Tekton EventListener that listens for webhook events and triggers different pipelines or tasks based on the branch name.
+
+3. TriggerBinding: Extract Branch Name from Webhook Payload
+Create a TriggerBinding to extract the branch name from the webhook payload.
+
+yaml
+Copy code
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerBinding
+metadata:
+  name: bitbucket-binding
+spec:
+  params:
+    - name: git-revision
+      value: "$(body.push.changes[0].new.name)"  # Extracts the branch name from the Bitbucket webhook payload
+    - name: git-repo-url
+      value: "$(body.repository.links.clone[0].href)"  # Extracts the repo URL from the webhook payload
+4. TriggerTemplates: Define Templates for Each Branch
+Create separate TriggerTemplate objects for different branches. These templates will run different pipelines based on the branch. For simplicity, let's assume you have different pipelines for dev, sit, and preprod.
+
+a. TriggerTemplate for dev Branch:
+yaml
+Copy code
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: dev-branch-template
+spec:
+  params:
+    - name: git-revision
+    - name: git-repo-url
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: dev-pipeline-run-
+      spec:
+        pipelineRef:
+          name: dev-pipeline  # Define your pipeline for the dev branch
+        params:
+          - name: git-revision
+            value: "$(params.git-revision)"
+          - name: git-repo-url
+            value: "$(params.git-repo-url)"
+b. TriggerTemplate for sit Branch:
+yaml
+Copy code
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: sit-branch-template
+spec:
+  params:
+    - name: git-revision
+    - name: git-repo-url
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: sit-pipeline-run-
+      spec:
+        pipelineRef:
+          name: sit-pipeline  # Define your pipeline for the sit branch
+        params:
+          - name: git-revision
+            value: "$(params.git-revision)"
+          - name: git-repo-url
+            value: "$(params.git-repo-url)"
+c. TriggerTemplate for preprod Branch:
+yaml
+Copy code
+apiVersion: triggers.tekton.dev/v1beta1
+kind: TriggerTemplate
+metadata:
+  name: preprod-branch-template
+spec:
+  params:
+    - name: git-revision
+    - name: git-repo-url
+  resourcetemplates:
+    - apiVersion: tekton.dev/v1beta1
+      kind: PipelineRun
+      metadata:
+        generateName: preprod-pipeline-run-
+      spec:
+        pipelineRef:
+          name: preprod-pipeline  # Define your pipeline for the preprod branch
+        params:
+          - name: git-revision
+            value: "$(params.git-revision)"
+          - name: git-repo-url
+            value: "$(params.git-repo-url)"
+5. EventListener with Conditional Triggers for Branches
+Now, in the EventListener, you can conditionally trigger a specific template based on the branch name.
+
+yaml
+Copy code
+apiVersion: triggers.tekton.dev/v1beta1
+kind: EventListener
+metadata:
+  name: branch-specific-listener
+spec:
+  serviceAccountName: tekton-triggers-sa
+  triggers:
+    - name: dev-trigger
+      bindings:
+        - ref: bitbucket-binding
+      template:
+        ref: dev-branch-template
+      interceptors:
+        - cel:
+            filter: "body.push.changes[0].new.name == 'dev'"  # Filter for the dev branch
+
+    - name: sit-trigger
+      bindings:
+        - ref: bitbucket-binding
+      template:
+        ref: sit-branch-template
+      interceptors:
+        - cel:
+            filter: "body.push.changes[0].new.name == 'sit'"  # Filter for the sit branch
+
+    - name: preprod-trigger
+      bindings:
+        - ref: bitbucket-binding
+      template:
+        ref: preprod-branch-template
+      interceptors:
+        - cel:
+            filter: "body.push.changes[0].new.name == 'preprod'"  # Filter for the preprod branch
+In this example:
+
+The EventListener listens for webhook events.
+Each trigger has a CEL interceptor that checks the branch name. It uses the branch name in the payload (body.push.changes[0].new.name) to filter and decide which TriggerTemplate to run.
+If the branch is dev, it triggers the dev-pipeline, for sit it triggers the sit-pipeline, and so on.
+6. Pipelines for Each Branch
+Finally, you need to define the pipelines for each branch (dev-pipeline, sit-pipeline, and preprod-pipeline). These pipelines can contain tasks specific to those environments.
+
+Here’s an example of a basic pipeline for the dev branch:
+
+yaml
+Copy code
+apiVersion: tekton.dev/v1beta1
+kind: Pipeline
+metadata:
+  name: dev-pipeline
+spec:
+  params:
+    - name: git-revision
+    - name: git-repo-url
+  tasks:
+    - name: clone-repo
+      taskSpec:
+        params:
+          - name: git-revision
+          - name: git-repo-url
+        steps:
+          - name: clone
+            image: alpine/git
+            script: |
+              git clone --branch $(params.git-revision) $(params.git-repo-url) .
+              echo "Cloned branch: $(params.git-revision)"
+              
+    - name: run-tests
+      runAfter: [clone-repo]
+      taskRef:
+        name: dev-test-task  # Any task for testing or deploying in the dev environment
+Similarly, you can define the pipelines for sit and preprod with different tasks suited to those environments.
+
+Final Workflow:
+A developer pushes to a branch (dev, sit, or preprod) in Bitbucket.
+The Bitbucket webhook triggers the Tekton EventListener.
+The CEL interceptor in the EventListener filters the branch name from the webhook payload.
+Based on the branch, it triggers the appropriate pipeline using the corresponding TriggerTemplate.
+The pipeline runs with the tasks specific to the environment for that branch.
+This approach allows you to define distinct pipelines for each branch (dev, sit, preprod) and only trigger them when there’s a relevant push event to those branches.
